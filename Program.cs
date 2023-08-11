@@ -60,7 +60,7 @@ class MyGameServer : GameServer<MyPlayer>
     public override async Task<bool> OnPlayerTypedMessage(MyPlayer player, ChatChannel channel, string msg)
     {
         if (player.IsMuted) return false;
-
+        Console.WriteLine(msg);
         bool containsBlacklistedString = blacklistedStrings.Strings.Any(s => msg.ToLower().Contains(s.ToLower()));
 
         if (containsBlacklistedString)
