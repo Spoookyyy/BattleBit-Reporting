@@ -1,113 +1,87 @@
-﻿using BattleBitAPI;
+using BattleBitAPI;
 using BattleBitAPI.Common;
 using BattleBitAPI.Server;
-using System.Threading.Channels;
-using System.Xml;
+using System.Text.Json;
+using System.Text;
+
 
 class Program
 {
-    static void Main(string[] args)
+    static async Task Main(string[] args)
     {
         var listener = new ServerListener<MyPlayer, MyGameServer>();
         listener.Start(29294);
-
-        Thread.Sleep(-1);
+        await Task.Delay(-1);
     }
 }
+
 class MyPlayer : Player<MyPlayer>
 {
-    public bool IsZombie;
+    public bool IsMuted { get; private set; }
+    public int Strikes { get; private set; }
+    public int ReportedAmount { get; set; }
+
+    public void IncrementStrike()
+    {
+        Strikes++;
+        if (Strikes >= MyGameServer.MaxStrikes)
+        {
+            IsMuted = true;
+        }
+    }
 }
+
 class MyGameServer : GameServer<MyPlayer>
 {
+    public const int MaxStrikes = 5;
+    public const int MaxReports = 5;
+    private static readonly BlacklistedStrings blacklistedStrings = new BlacklistedStrings();
+    private static readonly HttpClient httpClient = new HttpClient();
+    private static readonly string DiscordWebhookUrl = "https://";
 
-    public override async Task OnRoundStarted()
+    public override async Task OnPlayerReported(MyPlayer reporter, MyPlayer reportedPlayer, ReportReason reason, string description)
     {
-    }
-    public override async Task OnRoundEnded()
-    {
-    }
+        reportedPlayer.ReportedAmount++;
 
-    public override async Task OnPlayerConnected(MyPlayer player)
-    {
-        bool anyZombiePlayer = false;
-        foreach (var item in AllPlayers)
+        if (reportedPlayer.ReportedAmount >= MaxReports)
         {
-            if (item.IsZombie)
+            using StringContent jsonContent = new(
+                JsonSerializer.Serialize(new
+                {
+                    content = $"[{reporter.Name}](https://steamcommunity.com/profiles/{reportedPlayer.SteamID}) has been reported for {MaxReports} times"
+                }),
+                Encoding.UTF8,
+                "application/json");
+
+            await httpClient.PostAsync(DiscordWebhookUrl, jsonContent);
+        }
+    }
+
+    public override async Task<bool> OnPlayerTypedMessage(MyPlayer player, ChatChannel channel, string msg)
+    {
+        if (player.IsMuted) return false;
+
+        bool containsBlacklistedString = blacklistedStrings.Strings.Any(s => msg.ToLower().Contains(s.ToLower()));
+
+        if (containsBlacklistedString)
+        {
+            player.IncrementStrike();
+            player.Message($"You are currently at {player.Strikes} strikes");
+
+            if (player.IsMuted)
             {
-                anyZombiePlayer = true;
-                break;
+                await Console.Out.WriteLineAsync($"Player {player.Name} has been muted.");
             }
+
+            return false;
         }
 
-        if (!anyZombiePlayer)
-        {
-            player.IsZombie = true;
-            player.Message("You are the zombie.");
-            player.Kill();
-        }
+        return true;
     }
 
-    public override async Task OnAPlayerKilledAnotherPlayer(OnPlayerKillArguments<MyPlayer> args)
-    {
-        if (args.Victim.IsZombie)
-        {
-            args.Victim.IsZombie = false;
-            args.Victim.Message("You are no longer zombie");
+}
 
-            AnnounceShort("Choosing new zombie in 5");
-            await Task.Delay(1000);
-            AnnounceShort("Choosing new zombie in 4");
-            await Task.Delay(1000);
-            AnnounceShort("Choosing new zombie in 3");
-            await Task.Delay(1000);
-            AnnounceShort("Choosing new zombie in 2");
-            await Task.Delay(1000);
-            AnnounceShort("Choosing new zombie in 1");
-            await Task.Delay(1000);
-
-            args.Killer.IsZombie = true;
-            args.Killer.SetHeavyGadget(Gadgets.SledgeHammer.ToString(), 0, true);
-
-            var position = args.Killer.GetPosition();
-        }
-    }
-
-
-    public override async Task<OnPlayerSpawnArguments> OnPlayerSpawning(MyPlayer player, OnPlayerSpawnArguments request)
-    {
-        if (player.IsZombie)
-        {
-            request.Loadout.PrimaryWeapon = default;
-            request.Loadout.SecondaryWeapon = default;
-            request.Loadout.LightGadget = null;
-            request.Loadout.HeavyGadget = Gadgets.SledgeHammer;
-            request.Loadout.Throwable = null;
-        }
-
-        return request;
-    }
-    public override async Task OnPlayerSpawned(MyPlayer player)
-    {
-        if(player.IsZombie)
-        {
-            player.SetRunningSpeedMultiplier(2f);
-            player.SetJumpMultiplier(2f);
-            player.SetFallDamageMultiplier(0f);
-            player.SetReceiveDamageMultiplier(0.1f);
-            player.SetGiveDamageMultiplier(4f);
-        }
-    }
-
-
-
-    public override async Task OnConnected()
-    {
-        await Console.Out.WriteLineAsync("Current state: " + RoundSettings.State);
-
-    }
-    public override async Task OnGameStateChanged(GameState oldState, GameState newState)
-    {
-        await Console.Out.WriteLineAsync("State changed to -> " + newState);
-    }
+class BlacklistedStrings
+{
+    public string[] Strings { get; } = { "test" };
 }
