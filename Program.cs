@@ -4,6 +4,7 @@ using BattleBitAPI.Server;
 using System.Text.Json;
 using System.Text;
 
+using CommunityServerAPI.Handler;
 
 class Program
 {
@@ -15,26 +16,18 @@ class Program
     }
 }
 
-class MyPlayer : Player<MyPlayer>
+public class MyPlayer : Player<MyPlayer>
 {
-    public bool IsMuted { get; private set; }
-    public int Strikes { get; private set; }
+    public bool IsMuted { get; set; }
+    public int Strikes { get; set; }
     public int ReportedAmount { get; set; }
-
-    public void IncrementStrike()
-    {
-        Strikes++;
-        if (Strikes >= MyGameServer.MaxStrikes)
-        {
-            IsMuted = true;
-        }
-    }
 }
 
 class MyGameServer : GameServer<MyPlayer>
 {
     public const int MaxStrikes = 5;
     public const int MaxReports = 5;
+    
     private static readonly BlacklistedStrings blacklistedStrings = new BlacklistedStrings();
     private static readonly HttpClient httpClient = new HttpClient();
     private static readonly string DiscordWebhookUrl = "https://";
@@ -59,20 +52,26 @@ class MyGameServer : GameServer<MyPlayer>
 
     public override async Task<bool> OnPlayerTypedMessage(MyPlayer player, ChatChannel channel, string msg)
     {
+        messageHandler.handleMessage(player, channel, msg);
+        
         if (player.IsMuted) return false;
-        Console.WriteLine(msg);
-        bool containsBlacklistedString = blacklistedStrings.Strings.Any(s => msg.ToLower().Contains(s.ToLower()));
+
+        var containsBlacklistedString = blacklistedStrings.Strings.Any(s => msg.ToLower().Contains(s.ToLower()));
 
         if (containsBlacklistedString)
         {
-            player.IncrementStrike();
-            player.Message($"You are currently at {player.Strikes} strikes");
+            player.Strikes++;
 
-            if (player.IsMuted)
+            if (player.Strikes >= MyGameServer.MaxStrikes)
             {
+                player.IsMuted = true;
+                player.Message(("You have been muted for repeated offences"));
                 await Console.Out.WriteLineAsync($"Player {player.Name} has been muted.");
+                return false;
             }
-
+            
+            player.Message($"You are currently at {player.Strikes} strikes, if you continue you will be muted.");
+            
             return false;
         }
 
@@ -81,7 +80,3 @@ class MyGameServer : GameServer<MyPlayer>
 
 }
 
-class BlacklistedStrings
-{
-    public string[] Strings { get; } = { "test" };
-}
